@@ -71,6 +71,43 @@ describe("extractFromHtml", () => {
     expect(describeMedia(extracted.items)).toBe("1 張相片、1 條影片");
   });
 
+  it("reads a multi-escaped Instagram embed sidecar and a reel video", () => {
+    const sidecar = JSON.stringify({
+      edge_sidecar_to_children: {
+        edges: [
+          { node: { is_video: false, display_url: "https://scontent.cdninstagram.com/a.jpg" } },
+          { node: { is_video: false, display_url: "https://scontent.cdninstagram.com/a.jpg?stp=dst" } },
+          { node: { is_video: false, display_url: "https://scontent.cdninstagram.com/b.jpg" } },
+        ],
+      },
+    });
+    let wrapped = sidecar;
+    for (let layer = 0; layer < 3; layer += 1) {
+      wrapped = wrapped.replaceAll('"', '\\"').replaceAll("/", "\\/");
+    }
+    const photos = extractFromHtml(`<script>${wrapped}</script>`, "IGNORED");
+    expect(photos.items.map((item) => item.url)).toEqual([
+      "https://scontent.cdninstagram.com/a.jpg",
+      "https://scontent.cdninstagram.com/b.jpg",
+    ]);
+    expect(deliveryMode(photos.items.length)).toBe("zip");
+
+    const reel = JSON.stringify({
+      is_video: true,
+      display_url: "https://scontent.cdninstagram.com/poster.jpg",
+      video_url: "https://scontent.cdninstagram.com/clip.mp4",
+    });
+    const video = extractFromHtml(reel, null);
+    expect(video.items).toEqual([
+      {
+        kind: "video",
+        url: "https://scontent.cdninstagram.com/clip.mp4",
+        thumb: "https://scontent.cdninstagram.com/poster.jpg",
+      },
+    ]);
+    expect(deliveryMode(video.items.length)).toBe("single");
+  });
+
   it("uses og:image when the post json has no file", () => {
     const html = `<meta property="og:image" content="https://scontent.cdninstagram.com/v/preview.jpg?stp=dst&amp;oe=1" />`;
     const extracted = extractFromHtml(html, "MISSING");

@@ -126,8 +126,7 @@ function itemFromNode(node: Record<string, Json>): MediaItem | null {
 }
 
 function isPostNode(node: Record<string, Json>, code: string | null): boolean {
-  if (code && node.code !== code) return false;
-  if (!code && typeof node.code !== "string") return false;
+  if (!code || node.code !== code) return false;
   return (
     "image_versions2" in node ||
     "video_versions" in node ||
@@ -150,15 +149,123 @@ function itemsFromNode(node: Record<string, Json>): MediaItem[] {
   return item ? [item] : [];
 }
 
+function fileKey(url: string): string {
+  const path = url.split("?")[0] ?? url;
+  return path.split("/").pop() || path;
+}
+
 function dedupe(items: MediaItem[]): MediaItem[] {
   const seen = new Set<string>();
   const unique: MediaItem[] = [];
   for (const item of items) {
-    if (seen.has(item.url)) continue;
-    seen.add(item.url);
+    const key = fileKey(item.url);
+    if (seen.has(key)) continue;
+    seen.add(key);
     unique.push(item);
   }
   return unique;
+}
+
+function peelEscapes(html: string): string {
+  let text = html;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (/display_url":"https:\/\//.test(text) || /video_url":"https:\/\//.test(text)) break;
+    const next = text.replace(/\\\//g, "/").replace(/\\"/g, '"');
+    if (next === text) break;
+    text = next;
+  }
+  return text
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/\\%/g, "%");
+}
+
+function cleanMediaUrl(url: string): string {
+  return url.replace(/\\u0026/g, "&").replace(/\\u0025/g, "%").replace(/&amp;/g, "&");
+}
+
+function parseObjectAfter(text: string, marker: string): Record<string, Json> | null {
+  const at = text.indexOf(marker);
+  if (at < 0) return null;
+  const start = text.indexOf("{", at);
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, index + 1)) as Record<string, Json>;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function embeddedNode(node: Record<string, Json> | null): MediaItem | null {
+  if (!node) return null;
+  const video = typeof node.video_url === "string" ? cleanMediaUrl(node.video_url) : "";
+  const image = typeof node.display_url === "string" ? cleanMediaUrl(node.display_url) : "";
+  if (node.is_video === true && video) {
+    return image && !isSkippableImage(image) ? { kind: "video", url: video, thumb: image } : { kind: "video", url: video };
+  }
+  if (image && isDirectMedia(image) && !isSkippableImage(image)) {
+    return { kind: "photo", url: image, thumb: image };
+  }
+  return null;
+}
+
+function extractEmbeddedMedia(html: string): MediaItem[] {
+  if (!html.includes("display_url") && !html.includes("video_url")) return [];
+  const text = peelEscapes(html);
+  const sidecar = parseObjectAfter(text, '"edge_sidecar_to_children"');
+  const edges = sidecar ? asRecord(sidecar)?.edges : null;
+  if (Array.isArray(edges) && edges.length) {
+    const items = edges
+      .map((edge) => {
+        const record = asRecord(edge);
+        return embeddedNode(record ? asRecord(record.node) : null);
+      })
+      .filter((item): item is MediaItem => item !== null);
+    if (items.length) return dedupe(items);
+  }
+  const images = [...text.matchAll(/"display_url":"(https:\/\/[^"]+)"/g)]
+    .map((match) => cleanMediaUrl(match[1] ?? ""))
+    .filter((url) => url && isDirectMedia(url) && !isSkippableImage(url));
+  if (images.length > 1) {
+    return dedupe(images.map((url) => ({ kind: "photo" as const, url, thumb: url })));
+  }
+  const video = text.match(/"video_url":"(https:\/\/[^"]+)"/)?.[1];
+  const image = text.match(/"display_url":"(https:\/\/[^"]+)"/)?.[1];
+  if (video) {
+    const cleanVideo = cleanMediaUrl(video);
+    const cleanImage = image ? cleanMediaUrl(image) : "";
+    return [
+      cleanImage && !isSkippableImage(cleanImage)
+        ? { kind: "video", url: cleanVideo, thumb: cleanImage }
+        : { kind: "video", url: cleanVideo },
+    ];
+  }
+  if (image) {
+    const cleanImage = cleanMediaUrl(image);
+    if (isDirectMedia(cleanImage) && !isSkippableImage(cleanImage)) {
+      return [{ kind: "photo", url: cleanImage, thumb: cleanImage }];
+    }
+  }
+  return [];
 }
 
 function markdownImages(html: string): MediaItem[] {
@@ -195,6 +302,11 @@ export function extractFromHtml(html: string, code: string | null): Extracted {
   for (const node of matches) {
     const items = itemsFromNode(node);
     if (items.length > best.length) best = items;
+  }
+
+  if (!best.length) {
+    best = extractEmbeddedMedia(html);
+    if (best.length) postFound = true;
   }
 
   if (!best.length) {

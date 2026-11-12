@@ -43,8 +43,8 @@ npm run build
 
 呢個係靜態網站，冇一部長開嘅私人伺服器。
 
-- **Instagram** 公開 Reel、多圖同影片，會先問一部允許瀏覽器跨站讀取、而且唔使登入嘅 Cobalt 實例（`https://cobaltapi.cjs.nz/`）。官方 `api.cobalt.tools` 有機器人驗證，唔適合由呢個網頁直接呼叫，所以冇用佢。
-- **Threads** 相片同影片，同埋 Cobalt 攞唔到嘅 Instagram 連結，會再讀公開頁面（經 `https://r.jina.ai/`，瀏覽器可以跨站讀取）。媒體檔本身喺 Instagram CDN，而家允許網頁直接下載。
+- **Instagram** 會先問公開嘅 Cobalt 實例。佢而家對好多連結回空，所以會再讀 Instagram 公開 embed 頁（經 `https://r.jina.ai/`）。官方 `api.cobalt.tools` 有機器人驗證，呢個網頁冇用佢。
+- **Threads** 讀公開貼文頁。如果嗰邊被擋，公開相片會再用 `https://api.microlink.io/` 嘅預覽圖。媒體檔喺 Instagram CDN，瀏覽器可以直接下載。
 - 以上兩個都係外人維護嘅公開服務。佢哋限流、關閉或者改規則，拾影就會跟住失敗，頁面會寫明係限流、要登入，定係連線失敗。
 - 有啲公開單張相片，未登入嘅接口根本唔會交檔案出嚟。呢種情況會話你未登入搵唔到，而唔會假裝成「暫時無回應」。
 - 私人帳號、限時動態、精選動態、已刪除，同有年齡限制（未滿 21 歲）嘅內容，下載唔到。

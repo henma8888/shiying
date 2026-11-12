@@ -76,6 +76,18 @@ function parseInstagram(path: string): ParsedLink {
     };
   }
 
+  const share = path.match(new RegExp(`^\\/share\\/(?:(p|reels?|tv)\\/)?${CODE}\\/?$`, "i"));
+  if (share?.[2]) {
+    const bucket = (share[1] ?? "p").toLowerCase() === "reels" ? "reel" : (share[1] ?? "p").toLowerCase();
+    return {
+      ok: true,
+      service: "instagram",
+      kind: "post",
+      canonical: `https://www.instagram.com/share/${bucket}/${share[2]}/`,
+      code: null,
+    };
+  }
+
   const post = path.match(
     new RegExp(`^(?:\\/[^/]+)?\\/(p|reels?|tv)\\/${CODE}(?:\\/.*)?$`, "i"),
   );

@@ -6,6 +6,7 @@ import { parseInput, type ParsedLink, type Service } from "./url";
 
 export const COBALT_APIS = ["https://cobaltapi.cjs.nz/"];
 const JINA_PREFIX = "https://r.jina.ai/";
+const MICROLINK_PREFIX = "https://api.microlink.io/?url=";
 
 export type ResolveResult =
   | { ok: true; service: Service; code: string | null; canonical: string; items: MediaItem[] }
@@ -99,11 +100,28 @@ async function askCobalt(
   return { status: 0, body: null, network: lastNetwork };
 }
 
+type PageRead = { status: number; html: string; blocked: boolean; network: boolean };
+
+function isBlockedPage(status: number, html: string): boolean {
+  if (status === 401 || status === 403 || status === 429) return true;
+  return /AuthenticationRequiredError|bad IP reputation/i.test(html.slice(0, 1500));
+}
+
+function hardStop(html: string): ErrorKind | null {
+  const signals = signalsFromHtml(html);
+  if ((signals.restrictedAge != null && signals.restrictedAge >= 18) || signals.failureReason === "MA") {
+    return "age";
+  }
+  if (signals.privateAccount) return "private";
+  if (signals.unavailable) return "deleted";
+  return null;
+}
+
 async function readPublicPage(
   pageUrl: string,
   fetchImpl: FetchLike,
   signal?: AbortSignal,
-): Promise<{ status: number; html: string; network: boolean }> {
+): Promise<PageRead> {
   try {
     const response = await fetchImpl(`${JINA_PREFIX}${pageUrl}`, {
       headers: {
@@ -113,33 +131,61 @@ async function readPublicPage(
       signal,
     });
     const html = await response.text();
-    return { status: response.status, html, network: false };
+    const blocked = isBlockedPage(response.status, html);
+    return { status: response.status, html: blocked ? "" : html, blocked, network: false };
   } catch (error) {
     if (isAbort(error)) throw error;
-    return { status: 0, html: "", network: true };
+    return { status: 0, html: "", blocked: false, network: true };
   }
 }
 
-function fromPage(html: string, code: string | null, cobaltCode: string | null, httpStatus: number): ResolveResult | { items: MediaItem[] } {
-  let extracted = extractFromHtml(html, code);
-  if (!extracted.items.length) {
-    const ogUrl = html.match(/property=["']og:url["'][^>]*content=["']([^"']+)["']/i)?.[1];
-    if (ogUrl) {
-      const parsed = parseInput(ogUrl.replace(/&amp;/g, "&"));
-      if (parsed.ok && parsed.code && parsed.code !== code) {
-        const again = extractFromHtml(html, parsed.code);
-        if (again.items.length) extracted = again;
-      }
+function embedUrl(canonical: string, service: Service): string | null {
+  if (service !== "instagram") return null;
+  return canonical.endsWith("/") ? `${canonical}embed/` : `${canonical}/embed/`;
+}
+
+function pageCandidates(parsed: Extract<ParsedLink, { ok: true }>): string[] {
+  const embed = embedUrl(parsed.canonical, parsed.service);
+  if (!embed) return [parsed.canonical];
+  if (parsed.canonical.includes("/share/")) return [parsed.canonical, embed];
+  return [embed, parsed.canonical];
+}
+
+async function readMicrolink(
+  pageUrl: string,
+  fetchImpl: FetchLike,
+  signal?: AbortSignal,
+): Promise<{ items: MediaItem[]; blocked: boolean }> {
+  try {
+    const response = await fetchImpl(`${MICROLINK_PREFIX}${encodeURIComponent(pageUrl)}`, {
+      headers: { Accept: "application/json" },
+      signal,
+    });
+    if (response.status === 401 || response.status === 403 || response.status === 429) {
+      return { items: [], blocked: true };
     }
+    if (!response.ok) return { items: [], blocked: false };
+    const body = (await response.json()) as {
+      data?: {
+        image?: { url?: string; width?: number } | null;
+        video?: { url?: string } | string | null;
+      };
+    };
+    const image = body.data?.image;
+    const video = body.data?.video;
+    const videoUrl = typeof video === "string" ? video : video?.url;
+    if (videoUrl && /^https:\/\//.test(videoUrl)) {
+      const thumb = image?.url && (image.width ?? 0) > 200 ? image.url : undefined;
+      return { items: [{ kind: "video", url: videoUrl, ...(thumb ? { thumb } : {}) }], blocked: false };
+    }
+    if (image?.url && /^https:\/\//.test(image.url) && (image.width ?? 0) > 200 && !/s150x150|\/t51\.[^/]*-19\//.test(image.url)) {
+      return { items: [{ kind: "photo", url: image.url, thumb: image.url }], blocked: false };
+    }
+    return { items: [], blocked: false };
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return { items: [], blocked: false };
   }
-  if (extracted.items.length) return { items: extracted.items };
-  const error = classify({
-    ...signalsFromHtml(html),
-    cobaltCode,
-    httpStatus,
-    postFound: extracted.postFound,
-  });
-  return failure(error);
 }
 
 export async function resolvePost(
@@ -151,9 +197,16 @@ export async function resolvePost(
   if (!parsed.ok) return failure(classify({ parsed: "invalid" }));
   if (parsed.kind === "story") return failure(classify({ parsed: "story" }));
 
+  let cobaltCode: string | null = null;
+  let sawNetwork = false;
+  let sawBlock = false;
+  let sawHtml = false;
+  let bestItems: MediaItem[] = [];
+
   if (parsed.service === "instagram") {
     const cobalt = await askCobalt(parsed.canonical, fetchImpl, options?.signal);
-    const cobaltCode = cobalt.body?.error?.code ?? null;
+    cobaltCode = cobalt.body?.error?.code ?? null;
+    if (cobalt.network) sawNetwork = true;
     if (!cobalt.network && cobalt.body && !cobaltCode) {
       const items = itemsFromCobalt(cobalt.body);
       if (items === "remux") return failure("remux");
@@ -167,36 +220,69 @@ export async function resolvePost(
         };
       }
     }
+  }
 
-    const page = await readPublicPage(parsed.canonical, fetchImpl, options?.signal);
-    if (page.network && cobalt.network) return failure("network");
-    if (page.status === 429 && !page.html) return failure("rate");
-    const pageResult = fromPage(page.html, parsed.code, cobaltCode, page.status || cobalt.status);
-    if ("items" in pageResult) {
+  for (const pageUrl of pageCandidates(parsed)) {
+    const page = await readPublicPage(pageUrl, fetchImpl, options?.signal);
+    if (page.blocked) {
+      sawBlock = true;
+      continue;
+    }
+    if (page.network) {
+      sawNetwork = true;
+      continue;
+    }
+    if (page.html) sawHtml = true;
+    const stopped = hardStop(page.html);
+    if (stopped) return failure(stopped);
+    const extracted = extractFromHtml(page.html, parsed.code);
+    let items = extracted.items;
+    if (!items.length) {
+      const ogUrl = page.html.match(/property=["']og:url["'][^>]*content=["']([^"']+)["']/i)?.[1];
+      if (ogUrl) {
+        const again = parseInput(ogUrl.replace(/&amp;/g, "&"));
+        if (again.ok && again.code && again.code !== parsed.code) {
+          items = extractFromHtml(page.html, again.code).items;
+        }
+      }
+    }
+    if (items.length > 1 || items.some((item) => item.kind === "video")) {
       return {
         ok: true,
         service: parsed.service,
         code: parsed.code,
         canonical: parsed.canonical,
-        items: pageResult.items,
+        items,
       };
     }
-    if (page.network && (cobalt.status === 429 || cobaltCode?.includes("rate"))) return failure("rate");
-    return pageResult;
+    if (items.length === 1) {
+      bestItems = items;
+    }
   }
 
-  const page = await readPublicPage(parsed.canonical, fetchImpl, options?.signal);
-  if (page.network) return failure("network");
-  if (page.status === 429 && !page.html) return failure("rate");
-  const pageResult = fromPage(page.html, parsed.code, null, page.status);
-  if ("items" in pageResult) {
+  if (bestItems.length) {
     return {
       ok: true,
       service: parsed.service,
       code: parsed.code,
       canonical: parsed.canonical,
-      items: pageResult.items,
+      items: bestItems,
     };
   }
-  return pageResult;
+
+  const microlink = await readMicrolink(parsed.canonical, fetchImpl, options?.signal);
+  if (microlink.blocked) sawBlock = true;
+  if (microlink.items.length) {
+    return {
+      ok: true,
+      service: parsed.service,
+      code: parsed.code,
+      canonical: parsed.canonical,
+      items: microlink.items,
+    };
+  }
+
+  if (sawBlock) return failure("rate");
+  if (sawNetwork && !sawHtml) return failure("network");
+  return failure(classify({ cobaltCode, postFound: false }));
 }

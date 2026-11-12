@@ -67,6 +67,17 @@ describe("parseInput", () => {
     });
   });
 
+  it("keeps Instagram share links instead of rewriting them into a post path", () => {
+    expect(parseInput("https://www.instagram.com/share/reel/BAJexample/?igsh=abc")).toMatchObject({
+      ok: true,
+      service: "instagram",
+      kind: "post",
+      canonical: "https://www.instagram.com/share/reel/BAJexample/",
+      code: null,
+    });
+    expect(parseInput("https://www.threads.net/@user.name/post/AbC123/?hl=en").ok).toBe(true);
+  });
+
   it("rejects profiles and unrelated urls", () => {
     expect(parseInput("https://www.instagram.com/natgeo/").ok).toBe(false);
     expect(parseInput("https://example.com/p/AbC123").ok).toBe(false);
