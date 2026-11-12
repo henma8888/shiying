@@ -1,6 +1,7 @@
 import { unzipSync } from "fflate";
 import { copy, errorMessage, type ErrorKind } from "./copy";
 import { baseNameFor, MediaError, packageMedia } from "./download";
+import { deliverFile, downloadedMessage, requestBrowserSaveTarget, type SaveTarget } from "./folder";
 import { describeMedia, type MediaItem } from "./media";
 import { parseInput } from "./url";
 import { resolvePost } from "./resolve";
@@ -64,6 +65,12 @@ function saveBlob(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+function folderFor(raw: string): Promise<SaveTarget> | undefined {
+  const parsed = parseInput(raw);
+  if (!parsed.ok || parsed.kind === "story") return undefined;
+  return requestBrowserSaveTarget();
+}
+
 function reset(): void {
   job += 1;
   controller?.abort();
@@ -75,7 +82,7 @@ function reset(): void {
   input.focus();
 }
 
-async function run(raw: string): Promise<void> {
+async function run(raw: string, folder?: Promise<SaveTarget>): Promise<void> {
   const text = raw.trim();
   if (!text) return;
   const parsed = parseInput(text);
@@ -113,8 +120,10 @@ async function run(raw: string): Promise<void> {
     if (id !== job) return;
     const blobs = resolved.items.length === 1 ? [packed.blob] : await blobsFromZip(packed.blob, resolved.items);
     showPreview(resolved.items, blobs);
-    saveBlob(packed.blob, packed.filename);
-    setStatus(copy.downloaded);
+    const target = await (folder ?? requestBrowserSaveTarget());
+    if (id !== job) return;
+    const where = await deliverFile(target, packed.blob, packed.filename, saveBlob);
+    setStatus(downloadedMessage(where));
   } catch (error) {
     if (id !== job || (error instanceof Error && error.name === "AbortError")) return;
     const kind: ErrorKind = error instanceof MediaError ? error.kind : "network";
@@ -140,14 +149,16 @@ async function blobsFromZip(blob: Blob, items: MediaItem[]): Promise<Blob[]> {
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  void run(input.value);
+  const folder = folderFor(input.value);
+  void run(input.value, folder);
 });
 
 input.addEventListener("paste", (event) => {
   const text = event.clipboardData?.getData("text") ?? "";
   if (!text.trim()) return;
+  const folder = folderFor(text);
   window.setTimeout(() => {
-    void run(input.value);
+    void run(input.value, folder);
   }, 0);
 });
 
@@ -159,7 +170,7 @@ pasteButton.addEventListener("click", async () => {
       return;
     }
     input.value = text.trim();
-    await run(text);
+    await run(text, folderFor(text));
   } catch {
     setStatus(copy.clipboardDenied);
     input.focus();

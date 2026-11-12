@@ -26,6 +26,7 @@ export const errorMessage: Record<ErrorKind, string> = {
 export const copy = {
   checking: "檢查緊…",
   downloaded: "已下載",
+  downloadedFallback: "已下載。呢個瀏覽器會存入預設嘅下載項目或檔案。",
   clipboardEmpty: "剪貼簿入面冇 Instagram 或 Threads 連結。",
   clipboardDenied: "讀唔到剪貼簿。長按輸入框再貼上。",
 };
