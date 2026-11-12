@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>拾影</title>
+    <meta
+      name="description"
+      content="貼上公開 Instagram 或 Threads 連結，檢查到相片或影片就會自動下載。"
+    />
+    <link rel="icon" href="/shiying/favicon.svg" type="image/svg+xml" />
+    <script type="module" crossorigin src="/shiying/assets/index-BYdJ5u8u.js"></script>
+    <link rel="stylesheet" crossorigin href="/shiying/assets/index-BYWgKxzM.css">
+  </head>
+  <body>
+    <main>
+      <h1>拾影</h1>
+      <p class="lede">公開貼文，檢查完自動下載。</p>
+      <form id="form">
+        <label class="sr" for="url">連結</label>
+        <input
+          id="url"
+          name="url"
+          type="text"
+          inputmode="url"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Instagram 或 Threads 連結"
+        />
+        <div class="actions">
+          <button type="button" id="paste">貼上</button>
+          <button type="button" id="clear">清除</button>
+        </div>
+      </form>
+      <p id="status" role="status" aria-live="polite"></p>
+      <div id="preview"></div>
+      <p class="note">
+        只保存你有權保存嘅公開貼文。私人帳號、限時動態、已刪除同未滿 21
+        歲先睇到嘅內容，都下載唔到。
+      </p>
+    </main>
+  </body>
+</html>
