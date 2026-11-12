@@ -141,6 +141,21 @@ button:disabled {
   line-height: 1.5;
 }
 
+#install {
+  margin: 1.1rem 0 0;
+  padding: 0;
+  min-height: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+#install[hidden] {
+  display: none;
+}
+
 .sr {
   position: absolute;
   width: 1px;

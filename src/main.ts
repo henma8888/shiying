@@ -2,6 +2,7 @@ import { unzipSync } from "fflate";
 import { copy, errorMessage, type ErrorKind } from "./copy";
 import { baseNameFor, MediaError, packageMedia } from "./download";
 import { deliverFile, downloadedMessage, requestBrowserSaveTarget, type SaveTarget } from "./folder";
+import { shouldShowInstall } from "./install";
 import { describeMedia, type MediaItem } from "./media";
 import { parseInput } from "./url";
 import { resolvePost } from "./resolve";
@@ -18,6 +19,7 @@ const pasteButton = required(document.querySelector<HTMLButtonElement>("#paste")
 const clearButton = required(document.querySelector<HTMLButtonElement>("#clear"), "clear");
 const status = required(document.querySelector<HTMLParagraphElement>("#status"), "status");
 const preview = required(document.querySelector<HTMLDivElement>("#preview"), "preview");
+const installButton = required(document.querySelector<HTMLButtonElement>("#install"), "install");
 
 let job = 0;
 let controller: AbortController | null = null;
@@ -180,3 +182,41 @@ pasteButton.addEventListener("click", async () => {
 clearButton.addEventListener("click", () => {
   reset();
 });
+
+type InstallPrompt = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
+
+let installPrompt: InstallPrompt | null = null;
+
+function syncInstallButton(): void {
+  const standalone = window.matchMedia("(display-mode: standalone)").matches;
+  installButton.hidden = !shouldShowInstall(installPrompt !== null, standalone);
+}
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  installPrompt = event as InstallPrompt;
+  syncInstallButton();
+});
+
+installButton.addEventListener("click", async () => {
+  const pending = installPrompt;
+  if (!pending) return;
+  installPrompt = null;
+  syncInstallButton();
+  await pending.prompt();
+  await pending.userChoice;
+});
+
+window.addEventListener("appinstalled", () => {
+  installPrompt = null;
+  syncInstallButton();
+});
+
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, {
+    scope: import.meta.env.BASE_URL,
+  });
+}
