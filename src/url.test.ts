@@ -67,6 +67,31 @@ describe("parseInput", () => {
     });
   });
 
+  it("accepts Threads share links and ignores Instagram img_index", () => {
+    expect(parseInput("https://www.threads.com/share/BAYaW-I4W9/")).toMatchObject({
+      ok: true,
+      service: "threads",
+      kind: "post",
+      canonical: "https://www.threads.com/share/BAYaW-I4W9/",
+      code: null,
+    });
+    expect(parseInput("https://www.threads.com/share/BCQ20SsUU3")).toMatchObject({
+      ok: true,
+      service: "threads",
+      canonical: "https://www.threads.com/share/BCQ20SsUU3/",
+    });
+    const carousel = parseInput(
+      "https://www.instagram.com/p/DfZSA2sDyEt/?img_index=8&mdxt=MWY2dXNob2N0bmhvcw==",
+    );
+    expect(carousel).toMatchObject({
+      ok: true,
+      service: "instagram",
+      canonical: "https://www.instagram.com/p/DfZSA2sDyEt/",
+      code: "DfZSA2sDyEt",
+    });
+    if (carousel.ok) expect(carousel.canonical.includes("img_index")).toBe(false);
+  });
+
   it("keeps Instagram share links instead of rewriting them into a post path", () => {
     expect(parseInput("https://www.instagram.com/share/reel/BAJexample/?igsh=abc")).toMatchObject({
       ok: true,

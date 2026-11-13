@@ -109,12 +109,46 @@ function isBlockedPage(status: number, html: string): boolean {
 
 function hardStop(html: string): ErrorKind | null {
   const signals = signalsFromHtml(html);
-  if ((signals.restrictedAge != null && signals.restrictedAge >= 18) || signals.failureReason === "MA") {
+  if (
+    (signals.restrictedAge != null && signals.restrictedAge >= 18) ||
+    signals.failureReason === "MA" ||
+    /Age-restricted content/i.test(html)
+  ) {
     return "age";
   }
   if (signals.privateAccount) return "private";
+  if (/available to everyone/i.test(html)) return "unavailable";
   if (signals.unavailable) return "deleted";
   return null;
+}
+
+function linkedPost(html: string): { code: string | null; url: string | null } {
+  const decoded = html.replace(/&#0*64;/g, "@").replace(/\\u0040/g, "@");
+  const og = decoded.match(/property=["']og:url["'][^>]*content=["']([^"']+)["']/i)?.[1]
+    ?? decoded.match(/rel=["']canonical["'] href=["']([^"']+)["']/i)?.[1];
+  if (og) {
+    const parsed = parseInput(og.replace(/&amp;/g, "&"));
+    if (parsed.ok && parsed.code) return { code: parsed.code, url: parsed.canonical };
+  }
+  const shortcode = decoded.match(/shortcode=([A-Za-z0-9_-]+)/)?.[1]
+    ?? decoded.match(/"shortcode":"([A-Za-z0-9_-]+)"/)?.[1]
+    ?? null;
+  const vanity = decoded.match(/"vanity_username":"([^"]+)"/)?.[1]?.replace(/^@/, "") ?? null;
+  if (shortcode && vanity) {
+    return { code: shortcode, url: `https://www.threads.com/@${vanity}/post/${shortcode}` };
+  }
+  if (shortcode) return { code: shortcode, url: `https://www.threads.com/t/${shortcode}` };
+  return { code: null, url: null };
+}
+
+function mediaFromHtml(html: string, code: string | null): MediaItem[] {
+  let items = extractFromHtml(html, code).items;
+  const linked = linkedPost(html);
+  if (linked.code && linked.code !== code) {
+    const again = extractFromHtml(html, linked.code).items;
+    if (again.length > items.length) items = again;
+  }
+  return items;
 }
 
 async function readPublicPage(
@@ -210,7 +244,17 @@ export async function resolvePost(
     if (!cobalt.network && cobalt.body && !cobaltCode) {
       const items = itemsFromCobalt(cobalt.body);
       if (items === "remux") return failure("remux");
-      if (items && items.length) {
+      if (items && items.length > 1) {
+        return {
+          ok: true,
+          service: parsed.service,
+          code: parsed.code,
+          canonical: parsed.canonical,
+          items,
+        };
+      }
+      if (items?.length === 1 && !items.some((item) => item.kind === "video")) bestItems = items;
+      if (items?.some((item) => item.kind === "video")) {
         return {
           ok: true,
           service: parsed.service,
@@ -222,7 +266,12 @@ export async function resolvePost(
     }
   }
 
-  for (const pageUrl of pageCandidates(parsed)) {
+  const seenPages = new Set<string>();
+  const queue = [...pageCandidates(parsed)];
+  for (let index = 0; index < queue.length && index < 4; index += 1) {
+    const pageUrl = queue[index];
+    if (!pageUrl || seenPages.has(pageUrl)) continue;
+    seenPages.add(pageUrl);
     const page = await readPublicPage(pageUrl, fetchImpl, options?.signal);
     if (page.blocked) {
       sawBlock = true;
@@ -235,28 +284,18 @@ export async function resolvePost(
     if (page.html) sawHtml = true;
     const stopped = hardStop(page.html);
     if (stopped) return failure(stopped);
-    const extracted = extractFromHtml(page.html, parsed.code);
-    let items = extracted.items;
-    if (!items.length) {
-      const ogUrl = page.html.match(/property=["']og:url["'][^>]*content=["']([^"']+)["']/i)?.[1];
-      if (ogUrl) {
-        const again = parseInput(ogUrl.replace(/&amp;/g, "&"));
-        if (again.ok && again.code && again.code !== parsed.code) {
-          items = extractFromHtml(page.html, again.code).items;
-        }
-      }
-    }
-    if (items.length > 1 || items.some((item) => item.kind === "video")) {
+    const items = mediaFromHtml(page.html, parsed.code);
+    const linked = linkedPost(page.html);
+    if (linked.url && !seenPages.has(linked.url) && items.length <= 1) queue.push(linked.url);
+    if (items.length > bestItems.length) bestItems = items;
+    if (bestItems.length > 1 || bestItems.some((item) => item.kind === "video")) {
       return {
         ok: true,
         service: parsed.service,
         code: parsed.code,
         canonical: parsed.canonical,
-        items,
+        items: bestItems,
       };
-    }
-    if (items.length === 1) {
-      bestItems = items;
     }
   }
 

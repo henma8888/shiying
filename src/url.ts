@@ -106,6 +106,17 @@ function parseInstagram(path: string): ParsedLink {
 }
 
 function parseThreads(path: string): ParsedLink {
+  const share = path.match(new RegExp(`^\\/share\\/${CODE}\\/?$`));
+  if (share?.[1]) {
+    return {
+      ok: true,
+      service: "threads",
+      kind: "post",
+      canonical: `https://www.threads.com/share/${share[1]}/`,
+      code: null,
+    };
+  }
+
   const userPost = path.match(new RegExp(`^\\/@([^/]+)\\/post\\/${CODE}(?:\\/.*)?$`));
   if (userPost?.[1] && userPost[2]) {
     return {
