@@ -157,7 +157,7 @@ async function readPublicPage(
   signal?: AbortSignal,
 ): Promise<PageRead> {
   try {
-    const response = await fetchImpl(`${JINA_PREFIX}${pageUrl}`, {
+    const response = await fetchImpl(`${JINA_PREFIX}${pageUrl.replaceAll("@", "%40")}`, {
       headers: {
         Accept: "text/html",
         "X-Return-Format": "html",
@@ -170,6 +170,28 @@ async function readPublicPage(
   } catch (error) {
     if (isAbort(error)) throw error;
     return { status: 0, html: "", blocked: false, network: true };
+  }
+}
+
+async function stableThreadsPost(
+  parsed: Extract<ParsedLink, { ok: true }>,
+  fetchImpl: FetchLike,
+  signal?: AbortSignal,
+): Promise<Extract<ParsedLink, { ok: true }>> {
+  try {
+    const response = await fetchImpl(
+      `https://graph.threads.net/v1.0/oembed?url=${encodeURIComponent(parsed.canonical)}`,
+      { headers: { Accept: "application/json" }, signal },
+    );
+    if (!response.ok) return parsed;
+    const data = (await response.json()) as { html?: string };
+    const permalink = (data.html ?? "").match(/data-text-post-permalink="([^"]+)"/)?.[1]?.replace(/&amp;/g, "&");
+    if (!permalink) return parsed;
+    const next = parseInput(permalink);
+    return next.ok && next.service === "threads" ? next : parsed;
+  } catch (error) {
+    if (isAbort(error)) throw error;
+    return parsed;
   }
 }
 
@@ -227,9 +249,12 @@ export async function resolvePost(
   options?: { signal?: AbortSignal; fetchImpl?: FetchLike },
 ): Promise<ResolveResult> {
   const fetchImpl = options?.fetchImpl ?? fetch;
-  const parsed: ParsedLink = parseInput(input);
+  let parsed: ParsedLink = parseInput(input);
   if (!parsed.ok) return failure(classify({ parsed: "invalid" }));
   if (parsed.kind === "story") return failure(classify({ parsed: "story" }));
+  if (parsed.service === "threads") {
+    parsed = await stableThreadsPost(parsed, fetchImpl, options?.signal);
+  }
 
   let cobaltCode: string | null = null;
   let sawNetwork = false;

@@ -1,4 +1,3 @@
-import { unzipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import { packageMedia } from "./download";
 import { extractFromHtml } from "./extract";
@@ -8,11 +7,11 @@ const photo = (url: string): MediaItem => ({ kind: "photo", url });
 const video = (url: string): MediaItem => ({ kind: "video", url });
 
 describe("deliveryMode", () => {
-  it("saves one file as-is and several files as a zip", () => {
+  it("saves one file as itself and several files one by one", () => {
     expect(deliveryMode(0)).toBe("none");
     expect(deliveryMode(1)).toBe("single");
-    expect(deliveryMode(2)).toBe("zip");
-    expect(deliveryMode(6)).toBe("zip");
+    expect(deliveryMode(2)).toBe("each");
+    expect(deliveryMode(6)).toBe("each");
   });
 
   it("describes photo and video counts", () => {
@@ -67,7 +66,7 @@ describe("extractFromHtml", () => {
         thumb: "https://scontent.cdninstagram.com/b.jpg",
       },
     ]);
-    expect(deliveryMode(extracted.items.length)).toBe("zip");
+    expect(deliveryMode(extracted.items.length)).toBe("each");
     expect(describeMedia(extracted.items)).toBe("1 張相片、1 條影片");
   });
 
@@ -90,7 +89,7 @@ describe("extractFromHtml", () => {
       "https://scontent.cdninstagram.com/a.jpg",
       "https://scontent.cdninstagram.com/b.jpg",
     ]);
-    expect(deliveryMode(photos.items.length)).toBe("zip");
+    expect(deliveryMode(photos.items.length)).toBe("each");
 
     const reel = JSON.stringify({
       is_video: true,
@@ -134,15 +133,15 @@ describe("packageMedia", () => {
     }) as typeof fetch;
   }
 
-  it("packages one photo as a single file and a mixed post as a zip", async () => {
+  it("saves one photo as a single file and a mixed post as separate files", async () => {
     const single = await packageMedia(
       [photo("https://scontent.cdninstagram.com/a.jpg")],
       "shiying_instagram_CODE",
       undefined,
       fetchImpl("img"),
     );
-    expect(single.filename).toBe("shiying_instagram_CODE.jpg");
-    expect(single.blob.size).toBeGreaterThan(0);
+    expect(single.map((file) => file.filename)).toEqual(["shiying_instagram_CODE.jpg"]);
+    expect(single[0]?.blob.size).toBeGreaterThan(0);
 
     const mixed = await packageMedia(
       [photo("https://scontent.cdninstagram.com/a.jpg"), video("https://scontent.cdninstagram.com/b.mp4")],
@@ -150,10 +149,11 @@ describe("packageMedia", () => {
       undefined,
       fetchImpl("file"),
     );
-    expect(mixed.filename).toBe("shiying_threads_CODE.zip");
-    expect(deliveryMode(2)).toBe("zip");
-    const entries = unzipSync(new Uint8Array(await mixed.blob.arrayBuffer()));
-    expect(Object.keys(entries).sort()).toEqual(["01.jpg", "02.mp4"]);
+    expect(mixed.map((file) => file.filename)).toEqual([
+      "shiying_threads_CODE_01.jpg",
+      "shiying_threads_CODE_02.mp4",
+    ]);
+    expect(deliveryMode(2)).toBe("each");
   });
 
   it("refuses a media url outside the public cdn", async () => {

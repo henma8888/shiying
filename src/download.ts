@@ -1,6 +1,5 @@
-import { zipSync } from "fflate";
 import type { ErrorKind } from "./copy";
-import { deliveryMode, type MediaItem } from "./media";
+import { deliveryMode, mediaFilename, type MediaItem } from "./media";
 import { COBALT_APIS } from "./resolve";
 
 export class MediaError extends Error {
@@ -71,12 +70,25 @@ async function readFile(
   return { bytes, ext: extension(type, item.url, item.kind) };
 }
 
+export type SavedFile = { blob: Blob; filename: string };
+
+function blobType(ext: string): string {
+  if (ext === "jpg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  if (ext === "mp4") return "video/mp4";
+  if (ext === "webm") return "video/webm";
+  if (ext === "mov") return "video/quicktime";
+  return "application/octet-stream";
+}
+
 export async function packageMedia(
   items: MediaItem[],
   baseName: string,
   signal?: AbortSignal,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ blob: Blob; filename: string }> {
+): Promise<SavedFile[]> {
   const mode = deliveryMode(items.length);
   if (mode === "none") throw new MediaError("empty");
 
@@ -85,28 +97,14 @@ export async function packageMedia(
     files.push(await readFile(item, fetchImpl, signal));
   }
 
-  if (mode === "single") {
-    const file = files[0];
-    if (!file) throw new MediaError("empty");
+  return files.map((file, index) => {
     const copy = new Uint8Array(file.bytes.byteLength);
     copy.set(file.bytes);
     return {
-      blob: new Blob([copy], { type: file.ext === "jpg" ? "image/jpeg" : file.ext === "mp4" ? "video/mp4" : "application/octet-stream" }),
-      filename: `${baseName}.${file.ext}`,
+      blob: new Blob([copy], { type: blobType(file.ext) }),
+      filename: mediaFilename(baseName, index, files.length, file.ext),
     };
-  }
-
-  const archive: Record<string, Uint8Array> = {};
-  files.forEach((file, index) => {
-    archive[`${String(index + 1).padStart(2, "0")}.${file.ext}`] = file.bytes;
   });
-  const zipped = zipSync(archive, { level: 0 });
-  const copy = new Uint8Array(zipped.byteLength);
-  copy.set(zipped);
-  return {
-    blob: new Blob([copy], { type: "application/zip" }),
-    filename: `${baseName}.zip`,
-  };
 }
 
 export function baseNameFor(service: string, code: string | null): string {

@@ -9,9 +9,6 @@
     "preview": "vite preview",
     "test": "vitest run && tsc --noEmit"
   },
-  "dependencies": {
-    "fflate": "^0.8.2"
-  },
   "devDependencies": {
     "typescript": "^5.9.3",
     "vite": "^7.2.2",

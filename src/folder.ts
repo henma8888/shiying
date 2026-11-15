@@ -80,18 +80,38 @@ export async function deliverFile(
   filename: string,
   fallback: (blob: Blob, filename: string) => void,
 ): Promise<SaveKind> {
-  const name = safeDownloadName(filename);
+  return deliverFiles(target, [{ blob, filename }], fallback);
+}
+
+export async function deliverFiles(
+  target: SaveTarget,
+  files: { blob: Blob; filename: string }[],
+  fallback: (blob: Blob, filename: string) => void,
+): Promise<SaveKind> {
+  const named = files.map((file) => ({ blob: file.blob, filename: safeDownloadName(file.filename) }));
   if (target.kind === "folder") {
     try {
-      await target.directory.write(name, blob);
+      for (const file of named) await target.directory.write(file.filename, file.blob);
       return "folder";
     } catch {
-      fallback(blob, name);
+      await saveEach(named, fallback);
       return "fallback";
     }
   }
-  fallback(blob, name);
+  await saveEach(named, fallback);
   return "fallback";
+}
+
+async function saveEach(
+  files: { blob: Blob; filename: string }[],
+  fallback: (blob: Blob, filename: string) => void,
+): Promise<void> {
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    if (!file) continue;
+    if (index > 0) await new Promise((resolve) => setTimeout(resolve, 400));
+    fallback(file.blob, file.filename);
+  }
 }
 
 type PermissionHandle = FileSystemDirectoryHandle & {

@@ -1,5 +1,5 @@
-const SHELL_CACHE = "shiying-shell-v1";
-const STATIC_CACHE = "shiying-static-v1";
+const SHELL_CACHE = "shiying-shell-v2";
+const STATIC_CACHE = "shiying-static-v2";
 const SCOPE_PREFIX = "/shiying/";
 const SHELL_URL = new URL("./", self.location.href).href;
 

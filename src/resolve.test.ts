@@ -81,6 +81,34 @@ describe("resolvePost fallbacks", () => {
     expect(parsed.message).not.toContain("剪貼簿");
   });
 
+  it("asks Threads for the /t/ permalink before reading the page", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      seen.push(url);
+      if (url.includes("graph.threads.net")) {
+        return jsonResponse({
+          html: '<blockquote data-text-post-permalink="https://www.threads.com/t/DDupwppSjcp?utm_source=th_embed"></blockquote>',
+        });
+      }
+      if (url.includes("r.jina.ai")) {
+        return new Response(
+          `<script type="application/json">${JSON.stringify({
+            code: "DDupwppSjcp",
+            image_versions2: { candidates: [{ url: "https://scontent.cdninstagram.com/thread.jpg", width: 1080 }] },
+            video_versions: null,
+          })}</script>`,
+          { status: 200 },
+        );
+      }
+      return new Response("no", { status: 404 });
+    }) as typeof fetch;
+    const result = await resolvePost("https://www.threads.net/@mosseri/post/DDupwppSjcp", { fetchImpl });
+    expect(result.ok).toBe(true);
+    expect(seen.some((url) => url.includes("graph.threads.net"))).toBe(true);
+    expect(seen.some((url) => url.includes("/t/DDupwppSjcp") && !url.includes("@"))).toBe(true);
+  });
+
   it("follows a Threads share page to every photo in the real post", async () => {
     const html = `
       <meta property="og:url" content="https://www.threads.com/@jin_hello/post/DfoWchtge4a" />

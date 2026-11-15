@@ -1,7 +1,6 @@
-import { unzipSync } from "fflate";
 import { copy, errorMessage, type ErrorKind } from "./copy";
 import { baseNameFor, MediaError, packageMedia } from "./download";
-import { deliverFile, downloadedMessage, requestBrowserSaveTarget, type SaveTarget } from "./folder";
+import { deliverFiles, downloadedMessage, requestBrowserSaveTarget, type SaveTarget } from "./folder";
 import { shouldShowInstall } from "./install";
 import { describeMedia, type MediaItem } from "./media";
 import { parseInput } from "./url";
@@ -114,17 +113,16 @@ async function run(raw: string, folder?: Promise<SaveTarget>): Promise<void> {
 
     const summary = describeMedia(resolved.items);
     setStatus(`${summary}，下載緊…`);
-    const packed = await packageMedia(
+    const files = await packageMedia(
       resolved.items,
       baseNameFor(resolved.service, resolved.code),
       current.signal,
     );
     if (id !== job) return;
-    const blobs = resolved.items.length === 1 ? [packed.blob] : await blobsFromZip(packed.blob, resolved.items);
-    showPreview(resolved.items, blobs);
+    showPreview(resolved.items, files.map((file) => file.blob));
     const target = await (folder ?? requestBrowserSaveTarget());
     if (id !== job) return;
-    const where = await deliverFile(target, packed.blob, packed.filename, saveBlob);
+    const where = await deliverFiles(target, files, saveBlob);
     setStatus(downloadedMessage(where));
   } catch (error) {
     if (id !== job || (error instanceof Error && error.name === "AbortError")) return;
@@ -133,20 +131,6 @@ async function run(raw: string, folder?: Promise<SaveTarget>): Promise<void> {
   } finally {
     if (id === job) pasteButton.disabled = false;
   }
-}
-
-async function blobsFromZip(blob: Blob, items: MediaItem[]): Promise<Blob[]> {
-  if (items.length === 1) return [blob];
-  const files = unzipSync(new Uint8Array(await blob.arrayBuffer()));
-  return Object.keys(files)
-    .sort()
-    .map((name) => {
-      const bytes = files[name];
-      const copy = new Uint8Array(bytes?.byteLength ?? 0);
-      if (bytes) copy.set(bytes);
-      const type = name.endsWith(".mp4") ? "video/mp4" : "image/jpeg";
-      return new Blob([copy], { type });
-    });
 }
 
 form.addEventListener("submit", (event) => {
@@ -218,5 +202,6 @@ window.addEventListener("appinstalled", () => {
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, {
     scope: import.meta.env.BASE_URL,
+    updateViaCache: "none",
   });
 }

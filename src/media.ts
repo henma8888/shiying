@@ -6,12 +6,17 @@ export type MediaItem = {
   thumb?: string;
 };
 
-export type Delivery = "none" | "single" | "zip";
+export type Delivery = "none" | "single" | "each";
 
 export function deliveryMode(count: number): Delivery {
   if (count <= 0) return "none";
   if (count === 1) return "single";
-  return "zip";
+  return "each";
+}
+
+export function mediaFilename(baseName: string, index: number, total: number, ext: string): string {
+  if (total <= 1) return `${baseName}.${ext}`;
+  return `${baseName}_${String(index + 1).padStart(2, "0")}.${ext}`;
 }
 
 export function describeMedia(items: Pick<MediaItem, "kind">[]): string {
