@@ -107,6 +107,16 @@ export async function packageMedia(
   });
 }
 
+export function saveVideoAsFile(userAgent: string, platform = "", maxTouchPoints = 0): boolean {
+  if (/iPhone|iPad|iPod/i.test(userAgent)) return true;
+  return platform === "MacIntel" && maxTouchPoints > 1;
+}
+
+export function attachmentBlob(blob: Blob, saveAsFile: boolean): Blob {
+  if (!saveAsFile || !blob.type.startsWith("video/")) return blob;
+  return new Blob([blob], { type: "application/octet-stream" });
+}
+
 export function baseNameFor(service: string, code: string | null): string {
   const safeCode = (code ?? "post").replace(/[^A-Za-z0-9_-]/g, "");
   return `shiying_${service}_${safeCode || "post"}`;

@@ -9,6 +9,33 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("resolvePost fallbacks", () => {
+  it("keeps a Cobalt video and takes the public cover as its poster", async () => {
+    const embed = JSON.stringify({
+      is_video: true,
+      video_url: "https://scontent.cdninstagram.com/from-page.mp4",
+      display_url: "https://scontent.cdninstagram.com/v/t51.82787-15/cover.jpg",
+    });
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("cobaltapi.cjs.nz")) {
+        return jsonResponse({ status: "redirect", url: "https://scontent.cdninstagram.com/cobalt.mp4" });
+      }
+      if (url.includes("/embed/")) return new Response(embed, { status: 200 });
+      if (url.includes("api.microlink.io")) throw new Error("microlink should not replace the video");
+      return new Response("shell", { status: 200 });
+    }) as typeof fetch;
+    const result = await resolvePost("https://www.instagram.com/reel/DeauQaKNJcM/", { fetchImpl });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.items).toEqual([
+      {
+        kind: "video",
+        url: "https://scontent.cdninstagram.com/cobalt.mp4",
+        thumb: "https://scontent.cdninstagram.com/v/t51.82787-15/cover.jpg",
+      },
+    ]);
+  });
+
   it("uses the Instagram embed page when Cobalt has no media", async () => {
     const embed = JSON.stringify({
       edge_sidecar_to_children: {

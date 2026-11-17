@@ -141,6 +141,18 @@ function linkedPost(html: string): { code: string | null; url: string | null } {
   return { code: null, url: null };
 }
 
+function mergeMedia(current: MediaItem[], next: MediaItem[]): MediaItem[] {
+  if (!next.length) return current;
+  if (!current.length || next.length > current.length) return next;
+  const video = current.length === 1 ? current[0] : undefined;
+  if (video?.kind === "video" && !video.thumb) {
+    const poster = next.find((item) => item.kind === "video" && item.thumb)?.thumb
+      ?? next.find((item) => item.kind === "photo")?.url;
+    if (poster) return [{ ...video, thumb: poster }];
+  }
+  return current;
+}
+
 function mediaFromHtml(html: string, code: string | null): MediaItem[] {
   let items = extractFromHtml(html, code).items;
   const linked = linkedPost(html);
@@ -280,13 +292,17 @@ export async function resolvePost(
       }
       if (items?.length === 1 && !items.some((item) => item.kind === "video")) bestItems = items;
       if (items?.some((item) => item.kind === "video")) {
-        return {
-          ok: true,
-          service: parsed.service,
-          code: parsed.code,
-          canonical: parsed.canonical,
-          items,
-        };
+        const ready = items.length > 1 || items.every((item) => item.kind !== "video" || item.thumb);
+        if (ready) {
+          return {
+            ok: true,
+            service: parsed.service,
+            code: parsed.code,
+            canonical: parsed.canonical,
+            items,
+          };
+        }
+        bestItems = items;
       }
     }
   }
@@ -312,8 +328,8 @@ export async function resolvePost(
     const items = mediaFromHtml(page.html, parsed.code);
     const linked = linkedPost(page.html);
     if (linked.url && !seenPages.has(linked.url) && items.length <= 1) queue.push(linked.url);
-    if (items.length > bestItems.length) bestItems = items;
-    if (bestItems.length > 1 || bestItems.some((item) => item.kind === "video")) {
+    bestItems = mergeMedia(bestItems, items);
+    if (bestItems.length > 1 || bestItems.some((item) => item.kind === "video" && item.thumb)) {
       return {
         ok: true,
         service: parsed.service,

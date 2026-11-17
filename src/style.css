@@ -82,15 +82,30 @@ button {
   cursor: pointer;
 }
 
-#paste {
+#paste,
+#paste-download,
+#download {
   background: var(--accent);
   color: var(--accent-ink);
+}
+
+#paste-download {
+  grid-column: 1 / -1;
 }
 
 #clear {
   background: transparent;
   color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--line);
+}
+
+#download {
+  width: 100%;
+  margin: 0 0 0.75rem;
+}
+
+#download[hidden] {
+  display: none;
 }
 
 button:disabled {

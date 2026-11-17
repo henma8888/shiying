@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { packageMedia } from "./download";
+import { attachmentBlob, packageMedia, saveVideoAsFile } from "./download";
 import { extractFromHtml } from "./extract";
 import { deliveryMode, describeMedia, type MediaItem } from "./media";
 
@@ -154,6 +154,17 @@ describe("packageMedia", () => {
       "shiying_threads_CODE_02.mp4",
     ]);
     expect(deliveryMode(2)).toBe("each");
+  });
+
+  it("keeps an iPhone video as a downloadable file", () => {
+    const clip = new Blob(["video"], { type: "video/mp4" });
+    const photoBlob = new Blob(["photo"], { type: "image/jpeg" });
+    expect(saveVideoAsFile("Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X)")).toBe(true);
+    expect(saveVideoAsFile("Mozilla/5.0 (Linux; Android 14)", "Linux armv8l", 5)).toBe(false);
+    expect(saveVideoAsFile("Mozilla/5.0 (Macintosh)", "MacIntel", 5)).toBe(true);
+    expect(attachmentBlob(clip, true).type).toBe("application/octet-stream");
+    expect(attachmentBlob(clip, false).type).toBe("video/mp4");
+    expect(attachmentBlob(photoBlob, true).type).toBe("image/jpeg");
   });
 
   it("refuses a media url outside the public cdn", async () => {

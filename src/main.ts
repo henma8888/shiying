@@ -1,5 +1,5 @@
 import { copy, errorMessage, type ErrorKind } from "./copy";
-import { baseNameFor, MediaError, packageMedia } from "./download";
+import { attachmentBlob, baseNameFor, MediaError, packageMedia, saveVideoAsFile, type SavedFile } from "./download";
 import { deliverFiles, downloadedMessage, requestBrowserSaveTarget, type SaveTarget } from "./folder";
 import { shouldShowInstall } from "./install";
 import { describeMedia, type MediaItem } from "./media";
@@ -15,14 +15,18 @@ function required<T>(value: T | null, name: string): T {
 const form = required(document.querySelector<HTMLFormElement>("#form"), "form");
 const input = required(document.querySelector<HTMLInputElement>("#url"), "url");
 const pasteButton = required(document.querySelector<HTMLButtonElement>("#paste"), "paste");
+const pasteDownloadButton = required(document.querySelector<HTMLButtonElement>("#paste-download"), "paste-download");
 const clearButton = required(document.querySelector<HTMLButtonElement>("#clear"), "clear");
+const downloadButton = required(document.querySelector<HTMLButtonElement>("#download"), "download");
 const status = required(document.querySelector<HTMLParagraphElement>("#status"), "status");
 const preview = required(document.querySelector<HTMLDivElement>("#preview"), "preview");
 const installButton = required(document.querySelector<HTMLButtonElement>("#install"), "install");
 
 let job = 0;
 let controller: AbortController | null = null;
+let ready: SavedFile[] | null = null;
 const previewUrls: string[] = [];
+const saveVideoFile = saveVideoAsFile(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
 
 function setStatus(text: string): void {
   status.textContent = text;
@@ -43,11 +47,17 @@ function showPreview(items: MediaItem[], blobs: Blob[]): void {
     previewUrls.push(objectUrl);
     if (item.kind === "video") {
       const video = document.createElement("video");
-      video.src = objectUrl;
       video.controls = true;
+      video.muted = true;
       video.playsInline = true;
+      video.preload = "metadata";
+      video.setAttribute("playsinline", "");
+      video.setAttribute("webkit-playsinline", "");
       video.setAttribute("aria-label", "影片預覽");
+      if (item.thumb) video.poster = item.thumb;
       preview.append(video);
+      video.src = objectUrl;
+      video.load();
       return;
     }
     const image = document.createElement("img");
@@ -57,19 +67,30 @@ function showPreview(items: MediaItem[], blobs: Blob[]): void {
   });
 }
 
+function setReady(files: SavedFile[] | null): void {
+  ready = files;
+  downloadButton.hidden = !files?.length;
+}
+
 function saveBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(attachmentBlob(blob, saveVideoFile));
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
+  link.rel = "noopener";
+  document.body.append(link);
   link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-function folderFor(raw: string): Promise<SaveTarget> | undefined {
-  const parsed = parseInput(raw);
-  if (!parsed.ok || parsed.kind === "story") return undefined;
-  return requestBrowserSaveTarget();
+function saveNow(files: SavedFile[]): void {
+  for (const file of files) saveBlob(file.blob, file.filename);
+}
+
+function setBusy(busy: boolean): void {
+  pasteButton.disabled = busy;
+  pasteDownloadButton.disabled = busy;
 }
 
 function reset(): void {
@@ -79,17 +100,34 @@ function reset(): void {
   input.value = "";
   setStatus("");
   clearPreview();
-  pasteButton.disabled = false;
+  setReady(null);
+  setBusy(false);
   input.focus();
 }
 
-async function run(raw: string, folder?: Promise<SaveTarget>): Promise<void> {
+async function readClipboard(): Promise<string | null> {
+  try {
+    const text = (await navigator.clipboard.readText()).trim();
+    if (!parseInput(text).ok) {
+      setStatus(copy.clipboardEmpty);
+      return null;
+    }
+    return text;
+  } catch {
+    setStatus(copy.clipboardDenied);
+    input.focus();
+    return null;
+  }
+}
+
+async function run(raw: string, mode: "preview" | "download", folder?: Promise<SaveTarget>): Promise<void> {
   const text = raw.trim();
   if (!text) return;
   const parsed = parseInput(text);
   if (!parsed.ok) {
     setStatus(errorMessage.invalid);
     clearPreview();
+    setReady(null);
     return;
   }
 
@@ -97,11 +135,10 @@ async function run(raw: string, folder?: Promise<SaveTarget>): Promise<void> {
   controller?.abort();
   const current = new AbortController();
   controller = current;
-  input.value = parsed.canonical;
-  input.scrollLeft = 0;
   setStatus(copy.checking);
   clearPreview();
-  pasteButton.disabled = true;
+  setReady(null);
+  setBusy(true);
 
   try {
     const resolved = await resolvePost(parsed.canonical, { signal: current.signal });
@@ -112,7 +149,6 @@ async function run(raw: string, folder?: Promise<SaveTarget>): Promise<void> {
     }
 
     const summary = describeMedia(resolved.items);
-    setStatus(`${summary}，下載緊…`);
     const files = await packageMedia(
       resolved.items,
       baseNameFor(resolved.service, resolved.code),
@@ -120,47 +156,74 @@ async function run(raw: string, folder?: Promise<SaveTarget>): Promise<void> {
     );
     if (id !== job) return;
     showPreview(resolved.items, files.map((file) => file.blob));
+    setReady(files);
+    if (mode === "preview") {
+      setStatus(summary);
+      return;
+    }
+
+    setStatus(`${summary}，下載緊…`);
     const target = await (folder ?? requestBrowserSaveTarget());
     if (id !== job) return;
     const where = await deliverFiles(target, files, saveBlob);
+    if (id !== job) return;
     setStatus(downloadedMessage(where));
   } catch (error) {
     if (id !== job || (error instanceof Error && error.name === "AbortError")) return;
     const kind: ErrorKind = error instanceof MediaError ? error.kind : "network";
     setStatus(errorMessage[kind]);
   } finally {
-    if (id === job) pasteButton.disabled = false;
+    if (id === job) setBusy(false);
   }
 }
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  const folder = folderFor(input.value);
-  void run(input.value, folder);
+  void run(input.value, "preview");
 });
 
 input.addEventListener("paste", (event) => {
   const text = event.clipboardData?.getData("text") ?? "";
-  if (!text.trim()) return;
-  const folder = folderFor(text);
-  window.setTimeout(() => {
-    void run(input.value, folder);
-  }, 0);
+  if (!parseInput(text).ok) return;
+  event.preventDefault();
+  input.value = "";
+  void run(text, "preview");
 });
 
-pasteButton.addEventListener("click", async () => {
-  try {
-    const text = await navigator.clipboard.readText();
-    if (!parseInput(text).ok) {
-      setStatus(copy.clipboardEmpty);
-      return;
-    }
-    input.value = text.trim();
-    await run(text, folderFor(text));
-  } catch {
-    setStatus(copy.clipboardDenied);
-    input.focus();
+pasteButton.addEventListener("click", () => {
+  const reading = readClipboard();
+  void (async () => {
+    const text = await reading;
+    if (!text) return;
+    input.value = "";
+    await run(text, "preview");
+  })();
+});
+
+pasteDownloadButton.addEventListener("click", () => {
+  const folder = requestBrowserSaveTarget();
+  const reading = readClipboard();
+  void (async () => {
+    const text = await reading;
+    if (!text) return;
+    input.value = "";
+    await run(text, "download", folder);
+  })();
+});
+
+downloadButton.addEventListener("click", () => {
+  const files = ready;
+  if (!files?.length) return;
+  if (typeof window.showDirectoryPicker !== "function") {
+    saveNow(files);
+    setStatus(copy.downloadedFallback);
+    return;
   }
+  const folder = requestBrowserSaveTarget();
+  void (async () => {
+    const where = await deliverFiles(await folder, files, saveBlob);
+    setStatus(downloadedMessage(where));
+  })();
 });
 
 clearButton.addEventListener("click", () => {
